@@ -1,192 +1,270 @@
-互斥锁(mutex)
-Linux中提供一把互斥锁mutex（也称之为互斥量）。
+线程间的互斥：
 
-每个线程在对资源操作前都尝试先加锁，成功加锁才能操作，操作结束解锁。
-
-但通过“锁”就将资源的访问变成互斥操作，而后与时间有关的错误也不会再产生了。
-
-
+eg:
 
  
-
-但，应注意：同一时刻，只能有一个线程持有该锁。
-
-当A线程对某个全局变量加锁访问，B在访问前尝试加锁，拿不到锁，B阻塞。C线程不去加锁，而直接访问该全局变量，依然能够访问，但会出现数据混乱。
-
-所以，互斥锁实质上是操作系统提供的一把“建议锁”（又称“协同锁”），建议程序中有多线程访问共享资源的时候使用该机制。但，并没有强制限定。
-因此，即使有了mutex，如果有线程不按规则来访问数据，依然会造成数据混乱。
-
-1、主要应用函数：
-pthread_mutex_init()函数          功能：初始化一个互斥锁
-
-pthread_mutex_destroy()函数   功能：销毁一个互斥锁
-
-pthread_mutex_lock()函数        功能：加锁
-
-pthread_mutex_trylock()函数    功能：尝试加锁
-
-pthread_mutex_unlock()函数    功能：解锁
-
-以上5个函数的返回值都是：成功返回0， 失败返回错误号。
-
-pthread_mutex_t 类型，其本质是一个结构体。为简化理解，应用时可忽略其实现细节，简单当成整数看待。如：
-
-pthread_mutex_t   mutex; 变量mutex只有两种取值1、0。
-
-2、函数分析 
-<1>、初始化一个互斥锁(互斥量) ---> 初值可看作1 
-
-int pthread_mutex_init(pthread_mutex_t *restrict mutex, const pthread_mutexattr_t *restrict attr); 
-
-参1：传出参数，调用时应传 &mutex
-
-参2：互斥量属性。是一个传入参数，通常传NULL，选用默认属性(线程间共享)。
-
-注意：互斥锁初始化有两种方式：
-
-      【1】、静态初始化：如果互斥锁 mutex 是静态分配的（定义在全局，或加了static关键字修饰），可以直接使用宏进行初始化。e.g.  pthead_mutex_t   muetx = PTHREAD_MUTEX_INITIALIZER;
-
-        【2】、动态初始化：局部变量应采用动态初始化。e.g.  pthread_mutex_init(&mutex, NULL)
-
- <2>、加锁。可理解为将mutex--（或-1）
-
- int pthread_mutex_lock(pthread_mutex_t *mutex);
-
-<3>、尝试加锁
-
-int pthread_mutex_trylock(pthread_mutex_t *mutex);
-
- <4>、解锁。可理解为将mutex ++（或+1）
-
- int pthread_mutex_unlock(pthread_mutex_t *mutex);
-
-  <5>、销毁一个互斥锁
-
-int pthread_mutex_destroy(pthread_mutex_t *mutex);
-
-3、加锁与解锁
-lock与unlock：
-
-lock尝试加锁，如果加锁不成功，线程阻塞，阻塞到持有该互斥量的其他线程解锁为止。
-
-unlock主动解锁函数，同时将阻塞在该锁上的所有线程全部唤醒，至于哪个线程先被唤醒，取决于优先级、调度。默认：先阻塞、先唤醒。
-
-例如：T1 T2 T3 T4 使用一把mutex锁。T1加锁成功，其他线程均阻塞，直至T1解锁。T1解锁后，T2 T3 T4均被唤醒，并自动再次尝试加锁。
-
-可假想mutex锁 init成功初值为1。 lock 功能是将mutex--。 unlock将mutex++
-
-lock与trylock：
-
-lock加锁失败会阻塞，等待锁释放。
-
-trylock加锁失败直接返回错误号（如：EBUSY），不阻塞。
-
-4、加锁步骤测试：
-看如下程序：该程序是非常典型的，由于共享、竞争而没有加任何同步机制，导致产生于时间有关的错误，造成数据混乱：
-
-程序1：主线程和子线程打印出来的hello world 被分开输出了
-
-#include <stdio.h>
-#include <string.h>
-#include <pthread.h>
-#include <stdlib.h>
-#include <unistd.h>
+//共享资源
+static int num = 0;
+//互斥锁
+HANDLE  g_Mutex = CreateMutex(NULL, FALSE, NULL);
  
- 
- 
-void *tfn(void *arg)
+//子线程函数  
+unsigned int __stdcall ChildThreadFunc(LPVOID pM)
 {
+	while (true)
+	{
+		Sleep(500);
  
-    while (1) {
-      
- 
-        printf("hello ");
-        sleep(1);	/*模拟长时间操作共享资源，导致cpu易主，产生与时间有关的错误*/
-        printf("world\n");
-        sleep(1);//睡眠，释放cpu
-    }
- 
-    return NULL;
+		WaitForSingleObject(g_Mutex, INFINITE);//等待互斥量  INFINITE表示永远等待
+		num++;
+		printf("num:%d\n", num);
+		ReleaseMutex(g_Mutex);
+	}
+	return 0;
 }
  
-int main(void)
+int main()
 {
-   
-    pthread_t tid;
-    
-  
+	HANDLE handle[5] = { 0 };
  
-    pthread_create(&tid, NULL, tfn, NULL);
-    while (1) 
+	for (int i = 0; i < 5; i++)
 	{
-  
-        printf("HELLO ");
-        sleep(1);
-        printf("WORLD\n");      
-        sleep(1);
+		handle[i] = (HANDLE)_beginthreadex(NULL, 0, ChildThreadFunc, NULL, 0, NULL);
+	}
+	
+	//阻塞等待
+	for (int i = 0; i < 5; i++)
+	{
+		WaitForSingleObject(handle[i], -1);
+	}
+ 
+	printf("主线程 num:%d\n", num);
+	getchar();
+	return 0;
+}
+进程中使用互斥量与在线程中使用其原理和操作流程相同，唯一区别在于线程中可以不为互斥量指定名称，而在进程中需要指定名称，由此其他进程可以根据名称获取该互斥量的句柄。
+
+eg: 两个进程共享名字为pmutex的互斥量
+
+其中一个进程代码：
+
+#include <iostream>
+#include <windows.h>
+using namespace std;
+ 
+ 
+int main()
+{
+	// 若不存在名为"pmutex"的互斥量则创建它；否则获取其句柄
+    // Mutex 可以跨进程使用，所以其名称对整个系统而言是全局的，所以命名不要过于普通，类似：Mutex、Object 等。
+    HANDLE hMutex = CreateMutex(NULL, false, "mypmutex");
+    if(NULL == hMutex)
+    {
+        cout<<"create mutex error "<<GetLastError()<<endl;
+        return 0;
     }
-   
+    else 
+    {
+        cout<<" create mutex success:"<<hMutex<<endl;
+    }
  
- 
+     for(int i = 0;i<10; i++)
+    {
+		// 申请对互斥量的占有
+        DWORD  d  = WaitForSingleObject(hMutex, INFINITE);
+        if(WAIT_OBJECT_0 == d)
+        {
+			// 模拟对公共内存/文件的操作
+            cout<<"begin sleep"<<endl;
+            Sleep(2000);
+            cout<<"process 1"<<endl;
+			
+			// 操作完毕，释放对互斥量的占有
+            if(ReleaseMutex(hMutex)!=0)
+            {
+                cout<<"reslease ok"<<endl;
+            }
+            else
+            {
+                cout<<"reslease failed"<<endl;
+            }
+        }
+        if(WAIT_ABANDONED == d)
+        {
+            cout<<"WAIT_ABANDONED"<<endl;
+        }
+        if(WAIT_FAILED ==d)
+        {
+            cout<<"mutex error"<<endl;
+        }
+        Sleep(2000);
+    }
+	
+	// 释放互斥量
+    CloseHandle(hMutex);
+	hMutex = NULL;
     return 0;
 }
  
-/*线程之间共享资源stdout*/
-程序2：利用互斥锁解决程序1的bug
+另一个进程代码：
 
-#include <stdio.h>
-#include <string.h>
-#include <pthread.h>
-#include <stdlib.h>
-#include <unistd.h>
+#include <iostream>
+#include <windows.h>
+using namespace std;
  
-pthread_mutex_t mutex;      //定义锁
  
-void *tfn(void *arg)
+int main()
 {
- 
-    while (1) {
-        pthread_mutex_lock(&mutex);  //加锁
- 
-        printf("hello ");
-        sleep(1);	/*模拟长时间操作共享资源，导致cpu易主，产生与时间有关的错误*/
-        printf("world\n");
-        pthread_mutex_unlock(&mutex); //解锁
- 
-        sleep(1);//睡眠，释放cpu
+	// 若不存在名为"pmutex"的互斥量则创建它；否则获取其句柄
+    HANDLE hMutex = CreateMutex(NULL, false, "mypmutex");
+    if(NULL == hMutex)
+    {
+        cout<<"create mutex error "<<GetLastError()<<endl;
+        return 0;
+    }
+    else 
+    {
+        cout<<" create mutex success:"<<hMutex<<endl;
     }
  
-    return NULL;
+     for(int i = 0;i<10; i++)
+    {
+		// 申请对互斥量的占有
+        DWORD  d  = WaitForSingleObject(hMutex, INFINITE);
+        if(WAIT_OBJECT_0 == d)
+        {
+			// 模拟对公共内存/文件的操作
+            cout<<"begin sleep"<<endl;
+            Sleep(2000);
+            cout<<"process 2"<<endl;
+			
+			// 操作完毕，释放对互斥量的占有
+            if(ReleaseMutex(hMutex)!=0)
+            {
+                cout<<"reslease ok"<<endl;
+            }
+            else
+            {
+                cout<<"reslease failed"<<endl;
+            }
+        }
+        if(WAIT_ABANDONED == d)
+        {
+            cout<<"WAIT_ABANDONED"<<endl;
+        }
+        if(WAIT_FAILED ==d)
+        {
+            cout<<"mutex error"<<endl;
+        }
+        Sleep(2000);
+    }
+	
+	// 释放互斥量
+    CloseHandle(hMutex);
+	hMutex = NULL;
+    return 0;
 }
+总结步骤就是：
+
+1、创建一个互斥器：CreateMutex；
+2、打开一个已经存在的互斥器：OpenMutex；
+3、获得互斥器的拥有权：WaitForSingleObject、WaitForMultipleObjects ……（可能造成阻塞）；
+4、释放互斥器的拥有权：ReleaseMutex；
+5、关闭互斥器：CloseHandle；
+
+Mutex是内核对象，陷入内核时间性能相对较差（与Critical Section相比）
+
+WaitForMultipleObjects的例子：
+
+#include <iostream>
+#include <windows.h>
+using namespace std;
  
-int main(void)
+HANDLE  g_hMutex = NULL;
+const int g_Number = 3;
+DWORD WINAPI ThreadProc1(__in  LPVOID lpParameter);
+DWORD WINAPI ThreadProc2(__in  LPVOID lpParameter);
+DWORD WINAPI ThreadProc3(__in  LPVOID lpParameter);
+ 
+int main()
 {
-   
-    pthread_t tid;
-    
-  
-    pthread_mutex_init(&mutex, NULL);  //初始化锁 mutex==1
-    pthread_create(&tid, NULL, tfn, NULL);
-    while (1) 
-	{
+    g_hMutex = CreateMutex(NULL,FALSE,NULL);
+    //TRUE代表主线程拥有互斥对象 但是主线程没有释放该对象  互斥对象谁拥有 谁释放 
+    // FLASE代表当前没有线程拥有这个互斥对象
+    HANDLE hThread[ g_Number ] = {0};
+    int first = 1, second = 2, third = 3;
+    hThread[ 0 ] = CreateThread(NULL,0,ThreadProc1,(LPVOID)first,0,NULL);
+    hThread[ 1 ] = CreateThread(NULL,0,ThreadProc2,(LPVOID)second,0,NULL);
+    hThread[ 2 ] = CreateThread(NULL,0,ThreadProc3,(LPVOID)third,0,NULL);
  
-        pthread_mutex_lock(&mutex); //加锁
+    WaitForMultipleObjects(g_Number,hThread,TRUE,INFINITE);
+    CloseHandle( hThread[0] );
+    CloseHandle( hThread[1] );
+    CloseHandle( hThread[2] );
  
-        printf("HELLO ");
-        sleep(1);
-        printf("WORLD\n");
-        pthread_mutex_unlock(&mutex); //解锁
- 
-        sleep(1);
- 
-    }
-   
-    pthread_mutex_destroy(&mutex);  //销毁锁
- 
+    CloseHandle( g_hMutex );
     return 0;
 }
  
-/*线程之间共享资源stdout*/
-结论：
+DWORD WINAPI ThreadProc1(__in  LPVOID lpParameter)
+{
+    WaitForSingleObject(g_hMutex, INFINITE);//等待互斥量
+    cout<<(int)lpParameter<<endl;
+    ReleaseMutex(g_hMutex);//释放互斥量
+    return 0;
+}
+ 
+DWORD WINAPI ThreadProc2(__in  LPVOID lpParameter)
+{
+    WaitForSingleObject(g_hMutex, INFINITE);//等待互斥量
+    cout<<(int )lpParameter<<endl;
+    ReleaseMutex(g_hMutex);//释放互斥量
+    return 0;
+}
+ 
+DWORD WINAPI ThreadProc3(__in  LPVOID lpParameter)
+{
+    WaitForSingleObject( g_hMutex, INFINITE);//等待互斥量
+    cout<<(int)lpParameter<<endl;
+    ReleaseMutex(g_hMutex);//释放互斥量
+    return 0;
+}
+DWORD WaitForMultipleObjects的（DWORD NCOUNT，CONST HANDLE * lpHandles，BOOLfWaitAll，DWORDdwMilliseconds）;
 
-在访问共享资源前加锁，访问结束后立即解锁。锁的“粒度”应越小越好。
+四个参数分别是：
+
+1. NCOUNT，DWORD类型，用于指定句柄数组的数量
+2. lphObjects，指针类型，用于指定句柄数组的内存地址
+3. fWaitAll，布尔类型，真表示函数等待所有指定句柄的对象有信号为止，如果bWaitAll为FALSE，则返回值减去WAIT_OBJECT_0表示满足等待条件的对象的lpHandles数组索引。
+4. dwTimeout，DWORD类型，用于指定等待时间的超时时间，单位毫秒，可以是INFINITE
+当WaitForMultipleObjects等待多个内核对象的时候，如果它的bWaitAll参数设置为false。其返回值包括WAIT_OBJECT_0 。如果同时有多个内核对象被触发，这个函数返回的只是其中序号最小的那个。 
+
+说白了就是，要有限还是无限时间地，全部还是只要有一个完成就可以地，等待几个并且是哪几个内核对象完成。
+
+通常可以根据WaitForMultipleObjects的返回值判断是哪个序号的内核对象设置了信号：
+
+HANDLE h[3]; 
+h[0] = hProcess1; 
+h[1] = hProcess2; 
+h[2] = hProcess3; 
+DWORD dw = WaitForMultipleObjects(3, h, FALSE, 5000); 
+switch(dw) 
+{ 
+case WAIT_FAILED: 
+break; 
+case WAIT_TIMEOUT: 
+break; 
+case WAIT_OBJECT_0 + 0; 
+break; 
+case WAIT_OBJECT_0 + 1; 
+break; 
+case WAIT_OBJECT_0 + 2; 
+break; 
+} 
+
+
+但是上面的例子有一个问题，那就是比如hProcess1设置了信号，则switch必定返回WAIT_OBJECT_0+1
+
+如果我们再一次获取，及时hProcess1没有产生信号，那么也还是会返回WAIT_OBJECT_0+1，而无法判断后面的内核对象的状态
+
+这个时候需要手动处理一下。
